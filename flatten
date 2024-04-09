@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+#
+# flatten - flatten a row series into a single line
+
+# A filter for converting a series of values into a single line. Values may be
+# optionally quoted, comma-separated and/or surrounded in brackets.
+
+# USAGE
+# 	[command |] flatten [<options>] [< input] [[>]> output | command]
+
+# OPTIONS
+# 	-c, --comma
+# 		Comma-separate the values, or don't.
+# 	-q, --quote ["single" | "double" | "1" | "2" | "'" | '"']
+# 		Quote the values. Default is single quotes.
+# 	-b, --brackets ["square" | "round" | "braced" | "[]" | "()" | "{}"]
+# 		Enclose the values in brackets. Default is round brackets.
+# 	-C, --csv ["single" | "double" | "1" | "2" | "'" | '"']
+# 		Comma-separated values, enclosed in quotes. Default is single quotes.
+# 	-a, --array ["single" | "double" | "1" | "2" | "'" | '"']
+# 		Comma-separated, quoted values, enclosed in square brackets.
+# 	-t, --tuple ["single" | "double" | "1" | "2" | "'" | '"']
+# 		Comma-separated, quoted values, enclosed in round brackets.
+# 	-s, --set ["single" | "double" | "1" | "2" | "'" | '"']
+# 		Comma-separated, quoted values, enclosed in curly brackets.
+# 	--no-comma
+# 		Suppress the comma. Overrides -q, -C, -a, -t, -s.
+# 	--no-quotes
+# 		Don't quote the values. Overrides -q, -C, -a, -t, -s.
+# 	-h, --help
+# 		Display then help and exit.
+
+set -u -f -o noglob -o pipefail
+set -- $(getoptions -B -f -o 'a|array:?,t|tuple:?,s|set:?,C|csv:?,b|brackets:?,c|comma!,q|quotes:?,no-quotes,h|help' -- "$@")
+
+brackets=
+comma=
+quotes=
+while [[ $# ]] && [[ ${1:0:1} == "-" ]]; do
+	case $1 in
+		--no-quotes)
+			shift
+			quotes=
+			;;
+		--brackets)
+			shift
+			brackets=$1
+			shift 
+			;;
+		--comma)
+			shift
+			comma=${1:-true}
+			shift 
+			;;
+		--quotes)
+			shift
+			quotes=$1
+			shift 
+			;;
+		--tuple)
+			shift
+			quotes=$1
+			shift 
+			comma=true
+			brackets='()'
+			;;
+		--set)
+			shift
+			quotes=$1
+			shift 
+			comma=true
+			brackets='{}'
+			;;
+		--array)
+			shift
+			quotes=$1
+			shift
+			comma=true
+			brackets='[]'
+			;;
+		--csv)
+			shift
+			if [[ $1 == "-" ]]; then
+				quotes="'"
+			else
+				quotes=$1
+			fi
+			shift
+			comma=true
+			;;
+		--help)
+			cat >&2 <<EOF
+flatten - flatten a row series into a single line
+
+A filter for converting a series of values into a single line. Values may be
+optionally quoted, comma-separated and/or surrounded in brackets.
+
+USAGE
+	[command |] flatten [<options>] [< input] [[>]> output | command]
+
+OPTIONS
+	-c, --comma
+		Comma-separate the values, or don't.
+	-q, --quote ["single" | "double" | "1" | "2" | "'" | '"']
+		Quote the values. Default is single quotes.
+	-b, --brackets ["square" | "round" | "braced" | "[]" | "()" | "{}"]
+		Enclose the values in brackets. Default is round brackets.
+	-C, --csv ["single" | "double" | "1" | "2" | "'" | '"']
+		Comma-separated values, enclosed in quotes. Default is single quotes.
+	-a, --array ["single" | "double" | "1" | "2" | "'" | '"']
+		Comma-separated, quoted values, enclosed in square brackets.
+	-t, --tuple ["single" | "double" | "1" | "2" | "'" | '"']
+		Comma-separated, quoted values, enclosed in round brackets.
+	-s, --set ["single" | "double" | "1" | "2" | "'" | '"']
+		Comma-separated, quoted values, enclosed in curly brackets.
+	--no-comma
+		Suppress the comma. Overrides -q, -C, -a, -t, -s.
+	--no-quotes
+		Don't quote the values. Overrides -q, -C, -a, -t, -s.
+	-h, --help
+		Display then help and exit.
+EOF
+			exit 1
+			;;
+		--)
+			shift
+			break
+			;;
+		*)
+			echo "Unknown option: $1" >&2
+			exit 1
+			;;
+	esac
+done
+
+temp=$(mktemp -t "flatten.XXXXXX")
+cat <&0 > "$temp"
+
+if [[ -n $quotes ]]; then
+	if [[ $quotes == "double" ]] || [[ $quotes == "2" ]] || [[ $quotes == '"' ]]; then
+		awk -v quote='"' '{print quote $0 quote}' < "$temp" > "$temp.2"
+	elif [[ $quotes == "single" ]] || [[ $quotes == "1" ]] || [[ $quotes == "'" ]]; then
+		awk -v quote="'" '{print quote $0 quote}' < "$temp" > "$temp.2"
+	elif [[ $quotes == "()" ]]; then
+		mv "$temp" "$temp.2"
+		sed -Ee 's/[,]$//g' < "$temp.2" > "$temp"
+		awk '{print "(" $0 ")"}' < "$temp" > "$temp.2"
+	elif [[ $quotes == "[]" ]]; then
+		mv "$temp" "$temp.2"
+		sed -Ee 's/[,]$//g' < "$temp.2" > "$temp"
+		awk '{print "[" $0 "]"}' < "$temp" > "$temp.2"
+	elif [[ $quotes == "{}" ]]; then
+		mv "$temp" "$temp.2"
+		sed -Ee 's/[,]$//g' < "$temp.2" > "$temp"
+		awk '{print "{" $0 "}"}' < "$temp" > "$temp.2"
+	else
+		awk -v quote="'" '{print quote $0 quote}' < "$temp" > "$temp.2"
+	fi
+	mv "$temp.2" "$temp"
+fi
+
+if [[ $comma == true ]]; then
+	tr '\n' ',' < "$temp" > "$temp.2"
+	sed -Ee 's/,$/\n/' < "$temp.2" > "$temp"
+else
+	tr '\n' ' ' < "$temp" > "$temp.2"
+	sed -Ee 's/[[:space:]]$/\n/' < "$temp.2" > "$temp"
+fi
+
+if [[ -n $brackets ]]; then
+	if [[ $brackets == "square" ]] || [[ $brackets == '[]' ]]; then
+		awk '{print "[" $0 "]"}' < "$temp" > "$temp.2"
+	elif [[ $brackets == "round" ]] || [[ $brackets == '()' ]]; then
+		awk '{print "(" $0 ")"}' < "$temp" > "$temp.2"
+	elif [[ $brackets == "braced" ]] || [[ $brackets == '{}' ]]; then
+		awk '{print "{" $0 "}"}' < "$temp" > "$temp.2"
+	else
+		awk '{print "(" $0 ")"}' < "$temp" > "$temp.2"
+	fi
+	mv "$temp.2" "$temp"
+fi
+
+cat "$temp"
+rm -f "$temp.2" "$temp" 2> /dev/null
